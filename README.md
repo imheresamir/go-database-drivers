@@ -1,5 +1,5 @@
-sqlserver-go-json-rest
-======================
+go-database-drivers
+===================
 
 sqlserver-json-rest.go: MS SQL Server Adapter Example in Go
   * Uses [go-json-rest](https://github.com/ant0ine/go-json-rest) and the go odbc driver.
