@@ -1,39 +1,36 @@
 package main
 
 import (
-	_ "code.google.com/p/odbc"
-	"database/sql"
 	"fmt"
 	"github.com/ant0ine/go-json-rest/rest"
 	"log"
 	"net/http"
+	_ "github.com/mattn/go-sqlite3"
+	"database/sql"
 )
 
-var SQLSERVER_HOSTNAME = "TIGER\\SQLEXPRESS"
-var USER_ID = "user"
-var PASS = "pass"
-var PORT = "1433"
-var TABLENAME = "temp.dbo.Users2"
-var COLNAME = "Name"
-
-var HTTPREST_SERVERPORT = "8082"
+var DBNAME = "playlist.db"
+var TABLENAME = "playlist"
+var COLNAME1 = "url"
+var COLNAME2 = "played"
 
 type Api struct {
 	DB *sql.DB
 }
 
-type User struct {
-	Id   int
-	Name string
+type PlaylistEntry struct {
+	Id			int
+	Url			string
+	Played	int
 }
 
 func (api *Api) initDB() {
-	driverString := "driver={sql server};server=" + SQLSERVER_HOSTNAME + ";uid=" + USER_ID + ";pwd=" + PASS + ";port=" + PORT
-	db, err := sql.Open("odbc", driverString)
+	db, err := sql.Open("sqlite3", DBNAME)
 	if err != nil {
-		fmt.Println(err)
-		return
+		log.Fatal(err)
 	}
+	//defer db.Close()
+
 	api.DB = db
 }
 
@@ -45,55 +42,58 @@ func main() {
 		EnableRelaxedContentType: true,
 	}
 	handler.SetRoutes(
-		rest.RouteObjectMethod("GET", "/api/users", &api, "GetAllUsers"),
-		rest.RouteObjectMethod("POST", "/api/users", &api, "PostUser"),
-		rest.RouteObjectMethod("GET", "/api/users/:id", &api, "GetUser"),
-		/*&rest.RouteObjectMethod("PUT", "/api/users/:id", &api, "PutUser"),*/
-		rest.RouteObjectMethod("DELETE", "/api/users/:id", &api, "DeleteUser"),
+		rest.RouteObjectMethod("GET", "/api/entries", &api, "GetAllEntries"),
+		rest.RouteObjectMethod("POST", "/api/entries", &api, "PostEntry"),
+		rest.RouteObjectMethod("GET", "/api/entries/:id", &api, "GetEntry"),
+		//rest.RouteObjectMethod("PUT", "/api/entriess/:id", &api, "PutEntry"),
+		rest.RouteObjectMethod("DELETE", "/api/entries/:id", &api, "DeleteEntry"),
 	)
 
-	http.ListenAndServe(":" + HTTPREST_SERVERPORT, &handler)
+	http.ListenAndServe(":8082", &handler)
 }
 
-func (api *Api) GetAllUsers(w rest.ResponseWriter, r *rest.Request) {
-	users := make([]User, 0)
+func (api *Api) GetAllEntries(w rest.ResponseWriter, r *rest.Request) {
+	entries := make([]PlaylistEntry, 0)
 
-	rows, err := api.DB.Query("SELECT * FROM " + TABLENAME)
+	rows, err := api.DB.Query("SELECT ROWID, " + COLNAME1 + ", " + COLNAME2 + " FROM " + TABLENAME)
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer rows.Close()
 
 	for rows.Next() {
 		var id int
-		var name string
-		if err := rows.Scan(&id, &name); err != nil {
+		var url string
+		var played int
+		if err := rows.Scan(&id, &url, &played); err != nil {
 			log.Fatal(err)
 		}
-		users = append(users, User{Id: id, Name: name})
+		entries = append(entries, PlaylistEntry{Id: id, Url: url, Played: played})
 	}
 	if err := rows.Err(); err != nil {
 		log.Fatal(err)
 	}
 
-	w.WriteJson(&users)
+	w.WriteJson(&entries)
 }
 
-func (api *Api) GetUser(w rest.ResponseWriter, r *rest.Request) {
-	id := r.PathParam("id")
-	user := &User{}
+func (api *Api) GetEntry(w rest.ResponseWriter, r *rest.Request) {
+	idParam := r.PathParam("id")
+	entries := &PlaylistEntry{}
 
-	rows, err := api.DB.Query("SELECT * FROM " + TABLENAME + " WHERE ID = " + id)
+	rows, err := api.DB.Query("SELECT ROWID, " + COLNAME1 + ", " + COLNAME2 + " FROM " + TABLENAME + " WHERE ROWID = " + idParam)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	if rows.Next() {
 		var id int
-		var name string
-		if err := rows.Scan(&id, &name); err != nil {
+		var url string
+		var played int
+		if err := rows.Scan(&id, &url, &played); err != nil {
 			log.Fatal(err)
 		}
-		user = &User{Id: id, Name: name}
+		entries = &PlaylistEntry{Id: id, Url: url, Played: played}
 	} else {
 		rest.NotFound(w, r)
 		return
@@ -102,19 +102,25 @@ func (api *Api) GetUser(w rest.ResponseWriter, r *rest.Request) {
 		log.Fatal(err)
 	}
 
-	w.WriteJson(&user)
+	w.WriteJson(&entries)
 }
 
-func (api *Api) PostUser(w rest.ResponseWriter, r *rest.Request) {
-	user := User{}
+func (api *Api) PostEntry(w rest.ResponseWriter, r *rest.Request) {
+	entries := PlaylistEntry{}
 
-	err := r.DecodeJsonPayload(&user)
+	err := r.DecodeJsonPayload(&entries)
 	if err != nil {
 		rest.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	lastInsertId, err := api.DB.Query("INSERT INTO " + TABLENAME + "(" + COLNAME + ") OUTPUT Inserted.ID VALUES('" + user.Name + "')")
+	_, err = api.DB.Exec("INSERT INTO " + TABLENAME + "(" + COLNAME1 + ") VALUES('" + entries.Url + "')")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	lastInsertId, err := api.DB.Query("SELECT last_insert_rowid()")
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -125,7 +131,7 @@ func (api *Api) PostUser(w rest.ResponseWriter, r *rest.Request) {
 		if err := lastInsertId.Scan(&id); err != nil {
 			log.Fatal(err)
 		}
-		user.Id = id
+		entries.Id = id
 	} else {
 		rest.NotFound(w, r)
 		return
@@ -134,30 +140,30 @@ func (api *Api) PostUser(w rest.ResponseWriter, r *rest.Request) {
 		log.Fatal(err)
 	}
 
-	w.WriteJson(&user)
+	w.WriteJson(&entries)
 }
 
-/*func (api *Api) PutUser(w rest.ResponseWriter, r *rest.Request) {
+/*func (api *Api) PutPlaylistEntry(w rest.ResponseWriter, r *rest.Request) {
     id := r.PathParam("id")
     if self.Store[id] == nil {
         rest.NotFound(w, r)
         return
     }
-    user := User{}
-    err := r.DecodeJsonPayload(&user)
+    entries := PlaylistEntry{}
+    err := r.DecodeJsonPayload(&entries)
     if err != nil {
         rest.Error(w, err.Error(), http.StatusInternalServerError)
         return
     }
-    user.Id = id
-    self.Store[id] = &user
-    w.WriteJson(&user)
+    entries.Id = id
+    self.Store[id] = &entries
+    w.WriteJson(&entries)
 }*/
 
-func (api *Api) DeleteUser(w rest.ResponseWriter, r *rest.Request) {
+func (api *Api) DeleteEntry(w rest.ResponseWriter, r *rest.Request) {
 	id := r.PathParam("id")
 
-	_, err := api.DB.Exec("DELETE FROM " + TABLENAME + " WHERE ID = " + id)
+	_, err := api.DB.Exec("DELETE FROM " + TABLENAME + " WHERE ROWID = " + id)
 	if err != nil {
 		fmt.Println(err)
 		return
